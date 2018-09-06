@@ -8,6 +8,7 @@ from scapy_ssl_tls import *
 from scapy.all import *
 import sys
 
+ACK = 0x10
 
 def getArguments():
     if len(sys.argv) < 3:
@@ -45,8 +46,23 @@ def findLayers(packet):
     
     return layers
 
+def getTCPLen(packet):
+    if (not packet.haslayer(TCP)) or (not packet.haslayer(IP)):
+        print("Packet does not have either a TCP or IP layer, so can't find TCP len")
+        return -1
+    
+    IPLayer = packet.getlayer(IP)
+    TCPLayer = packet.getlayer(TCP)
+    ip_total_len = IPLayer.len
+    ip_header_len = IPLayer.ihl * 32 / 8
+    tcp_header_len = TCPLayer.dataofs * 32 / 8
+    tcpLen = ip_total_len - ip_header_len - tcp_header_len
+
+    return tcpLen
+
 def findRTT(packets, IPAddr):
     seqNum = 0
+    tcpLen = 0
     startTime = 0
     rtt = -1
     for i, packet in enumerate(packets):
@@ -59,12 +75,13 @@ def findRTT(packets, IPAddr):
         if IPLayer.dst == IPAddr and seqNum == 0:
             TCPLayer = IPLayer.getlayer(TCP)
             seqNum = TCPLayer.seq
+            tcpLen = getTCPLen(packet)
             startTime = packet.time
 
         elif seqNum != 0:
             TCPLayer = IPLayer.getlayer(TCP)
             ackNum = TCPLayer.ack
-            if ackNum == seqNum + 1:
+            if ackNum == seqNum + tcpLen:
                 stopTime = packet.time
                 rtt = stopTime - startTime
                 break
@@ -132,7 +149,7 @@ def printStats(cs, rtt):
 
     print("RTT: " + str(rtt))
 
-def plotStats(stats):
+def plotStats(stats, fileName):
     maxSize = max([x[2] for x in stats])
     minSize = min([x[2] for x in stats])
     largest = max([abs(maxSize), abs(minSize)])
@@ -157,21 +174,64 @@ def plotStats(stats):
     plt.gca().invert_yaxis()
     plt.xlim(0, XMAX)
     
-    plt.savefig("connection.png")
+    plt.savefig(fileName+".png")
     plt.show()
 
 
 
 
-def statistics(packets, IPAddr):
+def statistics(packets, IPAddr, fileName):
     cs, stats = counts(packets, IPAddr)
     rtt = findRTT(packets, IPAddr)
     printStats(cs, rtt)
 
-    plotStats(stats)
+    plotStats(stats, fileName)
+
+"""
+    Separate all packets (involving given server IP) into
+    TLS and TCP packets
+"""
+def separatePackets(packets):
+    tcp = []
+    tls = []
+    for packet in packets:
+        layers = findLayers(packet)
+        if layers[-1] == "TCP":
+            tcp.append(packet)
+        elif layers[-1] == "SSL/TLS":
+            tls.append(packet)
+    
+    return tcp, tls
+
+def findAck(packet, packets):
+    if not packet.haslayer(TCP):
+        print("Error: packet does not have TCP layer")
+        return -1 
+    TCPLayer = packet.getlayer(TCP)
+    # print("TCPLayer.seq: " + str(TCPLayer.seq))
+    # print("TCP len: " + str(getTCPLen(packet)))
+    minAck = TCPLayer.seq + getTCPLen(packet)
+
+    # print("minAck: " + str(minAck))
+    packetInd = packets.index(packet)
+    for i, v in enumerate(packets[packetInd:]):
+        vTCPLayer = v.getlayer(TCP)
+        if vTCPLayer.ack >= minAck:
+            # print("i: " + str(i) + " v.ack: " + str(vTCPLayer.ack))
+            # now check directions are right
+            packetIPLayer = packet.getlayer(IP)
+            tcpIPLayer = v.getlayer(IP)
+            if packetIPLayer.src == tcpIPLayer.dst:
+                return i + packetInd
+    
+
+    return -1
+
+
 
 def main():
     pcapFile, IPAddr = getArguments()
+    fileName = pcapFile.split(".")[0]
 
     try:
         packets = rdpcap(pcapFile)
@@ -180,7 +240,14 @@ def main():
         sys.exit(2)
     
     packets = removeOtherPackets(packets, IPAddr)
-    statistics(packets, IPAddr)
+    # TCPPackets, TLSPackets = separatePackets(packets)
+    # print("number of TCP packets: " + str(len(TCPPackets)) + "\nnumber of TLS packets: " + str(len(TLSPackets)))
+    for ind, packet in enumerate(packets):
+        if (packet.getlayer(IP).dst == IPAddr) and (not packet.getlayer(TCP).flags == ACK):
+            ackdPacketNum = findAck(packet, packets)
+            print("Packet {:>3} is ack'd at packet {:>3}".format(ind, ackdPacketNum) )
+
+    statistics(packets, IPAddr, fileName)
 
 
 
