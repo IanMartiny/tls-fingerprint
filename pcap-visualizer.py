@@ -61,32 +61,51 @@ def getTCPLen(packet):
     return tcpLen
 
 def findRTT(packets, IPAddr):
-    seqNum = 0
-    tcpLen = 0
-    startTime = 0
-    rtt = -1
-    for i, packet in enumerate(packets):
-        if not (packet.haslayer(IP) and packet.haslayer(TCP)):
-            print("error, packet (" + str(i) + ") doesn't have IP or TCP layer.")
-            sys.exit(3)
+    rtt = 100
+    for ind, packet in enumerate(packets):
+        if not packet.haslayer(TCP):
+            continue
+        # IPLayer = packet.getlayer(IP)
+        if packet.getlayer(TCP).flags == ACK:
+            continue
+        if not (packet.getlayer(IP).dst == IPAddr)  :
+            continue
+        startTime = packet.time
+        ackInd = findAck(packet, packets)
+        endTime = packets[ackInd].time
+        if (endTime - startTime) < rtt:
+            rtt = endTime - startTime
+            # print("updated RTT: rtt: {:<0.4}, ind: {:>3}, ackInd: {:>3}".format(rtt, ind, ackInd))
+
+    return rtt
 
 
-        IPLayer = packet.getlayer(IP)
-        if IPLayer.dst == IPAddr and seqNum == 0:
-            TCPLayer = IPLayer.getlayer(TCP)
-            seqNum = TCPLayer.seq
-            tcpLen = getTCPLen(packet)
-            startTime = packet.time
+    # seqNum = 0
+    # tcpLen = 0
+    # startTime = 0
+    # rtt = -1
+    # for i, packet in enumerate(packets):
+    #     if not (packet.haslayer(IP) and packet.haslayer(TCP)):
+    #         print("error, packet (" + str(i) + ") doesn't have IP or TCP layer.")
+    #         sys.exit(3)
 
-        elif seqNum != 0:
-            TCPLayer = IPLayer.getlayer(TCP)
-            ackNum = TCPLayer.ack
-            if ackNum == seqNum + tcpLen:
-                stopTime = packet.time
-                rtt = stopTime - startTime
-                break
 
-    return rtt 
+    #     IPLayer = packet.getlayer(IP)
+    #     if IPLayer.dst == IPAddr and seqNum == 0:
+    #         TCPLayer = IPLayer.getlayer(TCP)
+    #         seqNum = TCPLayer.seq
+    #         tcpLen = getTCPLen(packet)
+    #         startTime = packet.time
+
+    #     elif seqNum != 0:
+    #         TCPLayer = IPLayer.getlayer(TCP)
+    #         ackNum = TCPLayer.ack
+    #         if ackNum == seqNum + tcpLen:
+    #             stopTime = packet.time
+    #             rtt = stopTime - startTime
+    #             break
+
+    # return rtt 
 
 def addDirectional(packet, topLayer, IPAddr, ret, stats):
     if packet.haslayer("IP"):
@@ -187,22 +206,6 @@ def statistics(packets, IPAddr, fileName):
 
     plotStats(stats, fileName)
 
-"""
-    Separate all packets (involving given server IP) into
-    TLS and TCP packets
-"""
-def separatePackets(packets):
-    tcp = []
-    tls = []
-    for packet in packets:
-        layers = findLayers(packet)
-        if layers[-1] == "TCP":
-            tcp.append(packet)
-        elif layers[-1] == "SSL/TLS":
-            tls.append(packet)
-    
-    return tcp, tls
-
 def findAck(packet, packets):
     if not packet.haslayer(TCP):
         print("Error: packet does not have TCP layer")
@@ -240,12 +243,10 @@ def main():
         sys.exit(2)
     
     packets = removeOtherPackets(packets, IPAddr)
-    # TCPPackets, TLSPackets = separatePackets(packets)
-    # print("number of TCP packets: " + str(len(TCPPackets)) + "\nnumber of TLS packets: " + str(len(TLSPackets)))
-    for ind, packet in enumerate(packets):
-        if (packet.getlayer(IP).dst == IPAddr) and (not packet.getlayer(TCP).flags == ACK):
-            ackdPacketNum = findAck(packet, packets)
-            print("Packet {:>3} is ack'd at packet {:>3}".format(ind, ackdPacketNum) )
+    # for ind, packet in enumerate(packets):
+    #     if (packet.getlayer(IP).dst == IPAddr) and (not packet.getlayer(TCP).flags == ACK):
+    #         ackdPacketNum = findAck(packet, packets)
+    #         print("Packet {:>3} is ack'd at packet {:>3}".format(ind, ackdPacketNum) )
 
     statistics(packets, IPAddr, fileName)
 
