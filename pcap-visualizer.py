@@ -4,6 +4,7 @@ import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 import math
 import matplotlib.pyplot as plt
+import numpy as np
 from scapy_ssl_tls import *
 from scapy.all import *
 import sys
@@ -168,33 +169,79 @@ def printStats(cs, rtt):
 
     print("RTT: " + str(rtt))
 
-def plotStats(stats, fileName):
-    maxSize = max([x[2] for x in stats])
-    minSize = min([x[2] for x in stats])
-    largest = max([abs(maxSize), abs(minSize)])
-    largestScale = 0.8
-    XMAX = math.log(largest) / largestScale
-    for pair in stats:
-        xmax = 0
-        xmin = 0
-        if pair[2] > 0:
-            xmin = 0
-            xmax = math.log(pair[2])
-        else:
-            xmax = XMAX
-            xmin = XMAX - math.log(abs(pair[2]))
-        
-        if pair[1] == "TCP":
-            color = 'k'
-        elif pair[1] == "SSL/TLS":
-            color = 'r'
-
-        plt.hlines(pair[0],xmin, xmax, color)
-    plt.gca().invert_yaxis()
-    plt.xlim(0, XMAX)
+def getPacketSizes(packets):
+    sizes = []
+    for packet in packets:
+        if not packet.haslayer(IP):
+            continue
+        sizes.append(packet.getlayer(IP).len)
     
-    plt.savefig(fileName+".png")
+    return sizes
+
+def plotStats(packets, fileName, IPAddr):
+    packetSep = 0.05
+    currY = packetSep
+
+    # sizes = getPacketSizes(packets)
+    # print(sorted(sizes))
+    zeroTime = packets[0].time
+    # TODO: find local TCP time (from options of outgoing packet)
+    # TODO: find server TCP time (from option of incoming packet)
+    # TODO: equate the two TCP times based on RTT
+    # TODO: plot incoming arrows based on TCP time (convert TCP time to relative time?, TCP time is accurate to ms)
+    for packet in packets:
+        if (not packet.haslayer(IP)) or (not packet.haslayer(TCP)):
+            continue
+        if packet.getlayer(TCP).flags == ACK:
+            continue
+        if packet.getlayer(IP).src == IPAddr:
+            endTime = packet.time
+            continue
+        else:
+            startTime = packet.time
+            ackInd = findAck(packet, packets)
+            endTime = packets[ackInd].time
+            layersList = findLayers(packet)
+            if layersList[-1] == "SSL/TLS":
+                color = "r"
+            elif layersList[-1] == "TCP":
+                color = 'k'
+            
+            lw = packet.getlayer(IP).len/100 + 2
+            lineLength = endTime-startTime
+            plt.arrow(startTime-zeroTime, currY, 0.9*lineLength, 0, lw=lw, fc=color, ec=color, head_width=0.1*lineLength, head_length=0.1*lineLength)
+
+        currY += (packetSep)
+
+    plt.ylim([0,currY])
+    plt.gca().invert_yaxis()
     plt.show()
+    # maxSize = max([x[2] for x in stats])
+    # minSize = min([x[2] for x in stats])
+    # largest = max([abs(maxSize), abs(minSize)])
+    # largestScale = 0.8
+    # XMAX = math.log(largest) / largestScale
+    # for pair in stats:
+    #     xmax = 0
+    #     xmin = 0
+    #     if pair[2] > 0:
+    #         xmin = 0
+    #         xmax = math.log(pair[2])
+    #     else:
+    #         xmax = XMAX
+    #         xmin = XMAX - math.log(abs(pair[2]))
+        
+    #     if pair[1] == "TCP":
+    #         color = 'k'
+    #     elif pair[1] == "SSL/TLS":
+    #         color = 'r'
+
+    #     plt.hlines(pair[0],xmin, xmax, color)
+    # plt.gca().invert_yaxis()
+    # plt.xlim(0, XMAX)
+    
+    # plt.savefig(fileName+".png")
+    # plt.show()
 
 
 
@@ -204,7 +251,7 @@ def statistics(packets, IPAddr, fileName):
     rtt = findRTT(packets, IPAddr)
     printStats(cs, rtt)
 
-    plotStats(stats, fileName)
+    plotStats(packets, fileName, IPAddr)
 
 def findAck(packet, packets):
     if not packet.haslayer(TCP):
