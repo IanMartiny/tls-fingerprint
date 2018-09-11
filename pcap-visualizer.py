@@ -178,16 +178,55 @@ def getPacketSizes(packets):
     
     return sizes
 
+def getTimestamp(packet):
+    timeStamps = []
+    options = packet.getlayer(TCP).options
+    for option in options:
+        if option[0] == "Timestamp":
+            timeStamps = option[1]
+            break
+    
+    return timeStamps
+
+def getTCPTimes(packets, IPAddr):
+    packet = packets[0]
+    inTime = -1
+    outTime = -1
+    if (not packet.haslayer(IP)) or (not packet.haslayer(TCP)):
+        print("can't get TCP time without IP/TCP layers")
+        return inTime, outTime
+    
+    timeStamps = getTimestamp(packet)
+    firstTime = timeStamps[0]
+    ackInd = findAck(packet, packets)
+    packet = packets[ackInd]
+    timeStamps = getTimestamp(packet)
+    secondTime = timeStamps[0]
+    RTT = findRTT(packets, IPAddr)*100
+    if packet.getlayer(IP).dst == IPAddr:
+        inTime = firstTime - int(5*RTT)
+        outTime = secondTime
+
+    else:
+        outTime = firstTime
+        inTime = secondTime - int(5*RTT)
+
+    # print("inTime : {:>10d}".format(inTime))
+    # print("outTime: {:>10d}".format(outTime))
+    
+    return inTime, outTime
+    
 def plotStats(packets, fileName, IPAddr):
-    packetSep = 0.05
+    packetSep = 0.02
     currY = packetSep
 
     # sizes = getPacketSizes(packets)
     # print(sorted(sizes))
     zeroTime = packets[0].time
-    # TODO: find local TCP time (from options of outgoing packet)
-    # TODO: find server TCP time (from option of incoming packet)
-    # TODO: equate the two TCP times based on RTT
+    TCPIncomingZeroTime, TCPOutgoingZeroTime = getTCPTimes(packets, IPAddr)
+    print("TCPIncomingZeroTime: {:f}".format(TCPIncomingZeroTime))
+    print("ZeroTime: {:f}".format(zeroTime))
+    RTT = findRTT(packets, IPAddr)
     # TODO: plot incoming arrows based on TCP time (convert TCP time to relative time?, TCP time is accurate to ms)
     for packet in packets:
         if (not packet.haslayer(IP)) or (not packet.haslayer(TCP)):
@@ -195,22 +234,37 @@ def plotStats(packets, fileName, IPAddr):
         if packet.getlayer(TCP).flags == ACK:
             continue
         if packet.getlayer(IP).src == IPAddr:
-            endTime = packet.time
-            continue
-        else:
-            startTime = packet.time
-            ackInd = findAck(packet, packets)
-            endTime = packets[ackInd].time
-            layersList = findLayers(packet)
-            if layersList[-1] == "SSL/TLS":
-                color = "r"
-            elif layersList[-1] == "TCP":
-                color = 'k'
-            
-            lw = packet.getlayer(IP).len/100 + 2
+            endTime = (float(getTimestamp(packet)[0] - TCPIncomingZeroTime)/1000)
+            startTime = packet.time - zeroTime
+            # print("incoming startTime: {:f}".format(startTime))
+            # print("incoming endTime: {:f}".format(endTime))
+            # print("incoming TCPTime: {:d}".format(getTimestamp(packet)[0]))
+            # lw = packet.getlayer(IP).len/100 + 2
+            lw = None
             lineLength = endTime-startTime
-            plt.arrow(startTime-zeroTime, currY, 0.9*lineLength, 0, lw=lw, fc=color, ec=color, head_width=0.1*lineLength, head_length=0.1*lineLength)
+            # print("incoming lineLength: {:f}".format(lineLength))
+            # continue
+        else:
+            startTime = packet.time - zeroTime
+            ackInd = findAck(packet, packets)
+            endTime = packets[ackInd].time - zeroTime
+            # print("outgoing startTime: {:f}".format(startTime))
+            # print("outgoing endTime: {:f}".format(endTime))
+            
+            # lw = packet.getlayer(IP).len/100 + 2
+            lw = None
+            lineLength = endTime-startTime
+            # print("outgoing lineLength: {:f}".format(lineLength))
+            # continue
 
+        layersList = findLayers(packet)
+        if layersList[-1] == "SSL/TLS":
+            color = "r"
+        elif layersList[-1] == "TCP":
+            color = 'k'
+        # print("plot arrow from {:f} to {:f}".format(startTime, startTime + lineLength))
+        # plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, head_width=0.1*abs(lineLength), length_includes_head=True)
+        plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, length_includes_head=True)
         currY += (packetSep)
 
     plt.ylim([0,currY])
