@@ -4,9 +4,11 @@ import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 import math
 import matplotlib.pyplot as plt
+import mpld3
 import numpy as np
 from scapy_ssl_tls import *
 from scapy.all import *
+
 import sys
 
 ACK = 0x10
@@ -216,60 +218,104 @@ def getTCPTimes(packets, IPAddr):
     
     return inTime, outTime
     
+def add_arrow(line, position=None, direction='right', size=15, color=None):
+    """
+    add an arrow to a line.
+
+    line:       Line2D object
+    position:   x-position of the arrow. If None, mean of xdata is taken
+    direction:  'left' or 'right'
+    size:       size of the arrow in fontsize points
+    color:      if None, line color is taken.
+    """
+    if color is None:
+        color = line.get_color()
+
+    xdata = line.get_xdata()
+    ydata = line.get_ydata()
+
+    if position is None:
+        position = xdata[-2]
+    # find closest index
+    start_ind = np.argmin(np.absolute(xdata - position))
+    if direction == 'right':
+        end_ind = start_ind + 1
+    else:
+        end_ind = start_ind - 1
+
+    line.axes.annotate('',
+        xytext=(xdata[start_ind], ydata[start_ind]),
+        xy=(xdata[end_ind], ydata[end_ind]),
+        arrowprops=dict(arrowstyle="->", color=color),
+        size=size
+    )
+
 def plotStats(packets, fileName, IPAddr):
-    packetSep = 0.02
+    packetSep = 0.03
     currY = packetSep
 
     # sizes = getPacketSizes(packets)
     # print(sorted(sizes))
     zeroTime = packets[0].time
-    TCPIncomingZeroTime, TCPOutgoingZeroTime = getTCPTimes(packets, IPAddr)
-    print("TCPIncomingZeroTime: {:f}".format(TCPIncomingZeroTime))
-    print("ZeroTime: {:f}".format(zeroTime))
-    RTT = findRTT(packets, IPAddr)
+    # TCPIncomingZeroTime, TCPOutgoingZeroTime = getTCPTimes(packets, IPAddr)
+    # print("TCPIncomingZeroTime: {:f}".format(TCPIncomingZeroTime))
+    # print("ZeroTime: {:f}".format(zeroTime))
+    # RTT = findRTT(packets, IPAddr)
     # TODO: plot incoming arrows based on TCP time (convert TCP time to relative time?, TCP time is accurate to ms)
+    lastArrivalTime = 0
+    lastRTT = 0
     for packet in packets:
+        x = []
+        y = []
+        label = ""
+        layersList = findLayers(packet)
         if (not packet.haslayer(IP)) or (not packet.haslayer(TCP)):
             continue
         if packet.getlayer(TCP).flags == ACK:
             continue
         if packet.getlayer(IP).src == IPAddr:
-            endTime = (float(getTimestamp(packet)[0] - TCPIncomingZeroTime)/1000)
+            endTime = lastArrivalTime - (0.5*lastRTT)
             startTime = packet.time - zeroTime
             # print("incoming startTime: {:f}".format(startTime))
             # print("incoming endTime: {:f}".format(endTime))
-            # print("incoming TCPTime: {:d}".format(getTimestamp(packet)[0]))
             # lw = packet.getlayer(IP).len/100 + 2
             lw = None
             lineLength = endTime-startTime
-            # print("incoming lineLength: {:f}".format(lineLength))
-            # continue
+            x = np.linspace(startTime, endTime)
+            y = np.full(len(x), currY)
+            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}".format("incoming", startTime, endTime)
         else:
             startTime = packet.time - zeroTime
             ackInd = findAck(packet, packets)
             endTime = packets[ackInd].time - zeroTime
+            lastArrivalTime = endTime
+            lastRTT = endTime-startTime
+            x = np.linspace(startTime, endTime)
+            y = np.full(len(x), currY)
             # print("outgoing startTime: {:f}".format(startTime))
             # print("outgoing endTime: {:f}".format(endTime))
             
             # lw = packet.getlayer(IP).len/100 + 2
             lw = None
             lineLength = endTime-startTime
-            # print("outgoing lineLength: {:f}".format(lineLength))
-            # continue
+            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}".format("outgoing", startTime, endTime)
 
-        layersList = findLayers(packet)
         if layersList[-1] == "SSL/TLS":
             color = "r"
         elif layersList[-1] == "TCP":
             color = 'k'
         # print("plot arrow from {:f} to {:f}".format(startTime, startTime + lineLength))
-        # plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, head_width=0.1*abs(lineLength), length_includes_head=True)
-        plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, length_includes_head=True)
+        # plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, length_includes_head=True)
+        line = plt.plot(x,y, color=color, lw=5)[0]
+        tooltip = mpld3.plugins.LineLabelTooltip(line, label=label)
+        mpld3.plugins.connect(plt.gcf(), tooltip)
+        add_arrow(line)
         currY += (packetSep)
 
     plt.ylim([0,currY])
     plt.gca().invert_yaxis()
-    plt.show()
+    # plt.show()
+    mpld3.show()
     # maxSize = max([x[2] for x in stats])
     # minSize = min([x[2] for x in stats])
     # largest = max([abs(maxSize), abs(minSize)])
