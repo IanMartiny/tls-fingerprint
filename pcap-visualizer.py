@@ -264,26 +264,35 @@ def plotStats(packets, fileName, IPAddr):
     # TODO: plot incoming arrows based on TCP time (convert TCP time to relative time?, TCP time is accurate to ms)
     lastArrivalTime = 0
     lastRTT = 0
-    for packet in packets:
+    for ind, packet in enumerate(packets):
         x = []
         y = []
         label = ""
         layersList = findLayers(packet)
         if (not packet.haslayer(IP)) or (not packet.haslayer(TCP)):
             continue
-        if packet.getlayer(TCP).flags == ACK:
+        if packet.getlayer(TCP).flags == ACK and getTCPLen(packet) == 0:
             continue
         if packet.getlayer(IP).src == IPAddr:
             endTime = lastArrivalTime - (0.5*lastRTT)
             startTime = packet.time - zeroTime
-            # print("incoming startTime: {:f}".format(startTime))
-            # print("incoming endTime: {:f}".format(endTime))
-            # lw = packet.getlayer(IP).len/100 + 2
-            lw = None
             lineLength = endTime-startTime
             x = np.linspace(startTime, endTime)
-            y = np.full(len(x), currY)
-            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}".format("incoming", startTime, endTime)
+            if layersList[-1] == "SSL/TLS":
+                color = "r"
+                packetType = packet.getlayer(SSL).fields['records'][0].payload.name
+                if packetType == "Raw":
+                    size = len(packet.getlayer(SSL).fields['records'][0].payload.load)
+                elif packetType == "TLS Ciphertext":
+                    size = len(packet.getlayer(SSL).fields['records'][0].payload.data)
+                elif packetType == "TLS Handshakes":
+                    size = packet.getlayer(SSL).fields['records'][0].length
+
+            elif layersList[-1] == "TCP":
+                color = 'k'
+                size = getTCPLen(packet)
+            lw = size/100 + 2
+            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}, packet: {}, size: {}".format("incoming", startTime, endTime, ind, size)
         else:
             startTime = packet.time - zeroTime
             ackInd = findAck(packet, packets)
@@ -291,30 +300,34 @@ def plotStats(packets, fileName, IPAddr):
             lastArrivalTime = endTime
             lastRTT = endTime-startTime
             x = np.linspace(startTime, endTime)
-            y = np.full(len(x), currY)
-            # print("outgoing startTime: {:f}".format(startTime))
-            # print("outgoing endTime: {:f}".format(endTime))
-            
-            # lw = packet.getlayer(IP).len/100 + 2
-            lw = None
             lineLength = endTime-startTime
-            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}".format("outgoing", startTime, endTime)
+            if layersList[-1] == "SSL/TLS":
+                color = "g"
+                packetType = packet.getlayer(SSL).fields['records'][0].payload.name
+                if packetType == "Raw":
+                    size = len(packet.getlayer(SSL).fields['records'][0].payload.load)
+                elif packetType == "TLS Ciphertext":
+                    size = len(packet.getlayer(SSL).fields['records'][0].payload.data)
+                elif packetType == "TLS Handshakes":
+                    size = packet.getlayer(SSL).fields['records'][0].length
+            elif layersList[-1] == "TCP":
+                color = 'k'
+                size = getTCPLen(packet)
+            lw = size/100 + 2
+            label = "Direction: {}, start: {:0.3f}, end: {:0.3f}, packet: {}, size: {}".format("outgoing", startTime, endTime, ind, size)
 
-        if layersList[-1] == "SSL/TLS":
-            color = "r"
-        elif layersList[-1] == "TCP":
-            color = 'k'
-        # print("plot arrow from {:f} to {:f}".format(startTime, startTime + lineLength))
-        # plt.arrow(startTime, currY, lineLength, 0, lw=lw, fc=color, ec=color, length_includes_head=True)
-        line = plt.plot(x,y, color=color, lw=5)[0]
+        currY += (lw/2)
+        y = np.full(len(x), currY)
+        line = plt.plot(x,y, color=color, lw=lw)[0]
         tooltip = mpld3.plugins.LineLabelTooltip(line, label=label)
         mpld3.plugins.connect(plt.gcf(), tooltip)
         add_arrow(line)
         currY += (packetSep)
 
     plt.ylim([0,currY])
-    plt.gca().invert_yaxis()
+    # plt.gca().invert_yaxis()
     # plt.show()
+    plt.title(fileName)
     mpld3.show()
     # maxSize = max([x[2] for x in stats])
     # minSize = min([x[2] for x in stats])
@@ -381,7 +394,7 @@ def findAck(packet, packets):
 
 def main():
     pcapFile, IPAddr = getArguments()
-    fileName = pcapFile.split(".")[0]
+    fileName = pcapFile.split(".")[0].split("/")[-1]
 
     try:
         packets = rdpcap(pcapFile)
